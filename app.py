@@ -128,6 +128,9 @@ class Bonitisation:
 
         return corr_matrix
 
+import pandas as pd
+import numpy as np
+
 class GetStatistics:
     def __init__(self, data):
         self.data = data
@@ -145,6 +148,7 @@ class GetStatistics:
             "CV (%)": [],
             "X+1.5δ": [],
             "X-1δ": [],
+            "X-0.5δ": [],
         }
 
         for column in numeric_columns.columns:
@@ -157,6 +161,7 @@ class GetStatistics:
             cv = round((sigma / mean) * 100 if mean != 0 else 0, self.ROUND_VALUE)
             x_plus_1_5d = round(mean + 1.5 * sigma, self.ROUND_VALUE)
             x_minus_1d = round(mean - sigma, self.ROUND_VALUE)
+            x_minus_0_5d = round(mean - 0.5 * sigma, self.ROUND_VALUE)
 
             results["Column"].append(column)
             results["Mean"].append(mean)
@@ -167,9 +172,44 @@ class GetStatistics:
             results["CV (%)"].append(cv)
             results["X+1.5δ"].append(x_plus_1_5d)
             results["X-1δ"].append(x_minus_1d)
+            results["X-0.5δ"].append(x_minus_0_5d)
 
         results_df = pd.DataFrame(results)
         return results_df
+
+    def classify_fish(self, stats_df):
+        classification_data = []
+
+        for _, row in stats_df.iterrows():
+            column = row["Column"]
+            mean = row["Mean"]
+            sigma = row["Sigma (Std Dev)"]
+            x_minus_0_5d = row["X-0.5δ"]
+            x_minus_1_5d = row["X-1δ"]
+
+            classification_result = []
+            for fish_value in self.data[column]:
+                if fish_value >= x_minus_0_5d:
+                    classification_result.append("Elite")
+                elif x_minus_1_5d <= fish_value < x_minus_0_5d:
+                    classification_result.append("Class 1")
+                else:
+                    classification_result.append("Class 2")
+
+            classification_data.append({
+                "Column": column,
+                "Classification": classification_result
+            })
+
+
+        classification_df = pd.DataFrame({
+            "Fish ID": self.data.index
+        })
+        for col_data in classification_data:
+            classification_df[col_data["Column"]] = col_data["Classification"]
+
+        return classification_df
+
     
 def draw_histograms(data, num_rows=3, num_cols=4):
     numeric_columns = data.select_dtypes(include=['float64', 'int64']).columns
@@ -197,6 +237,9 @@ def draw_histograms(data, num_rows=3, num_cols=4):
 
     return histogram_images
 
+
+st.title("Анализ данных и критерия элитности рыбы")
+
 if fish_type.startswith("Stal"):
     data = ConnectionDatabase().connect_db("stal")
     st.subheader("Сталеголовый лосось")
@@ -207,12 +250,20 @@ else:
 st.write("Предварительный просмотр данных:")
 st.write(data.head())
 
-st.subheader("Основные статистики")
 stats = GetStatistics(data).get_stats()
+st.subheader("Основные статистики")
 st.write(stats)
 
-csv_stats = stats.to_csv(index=False)
-st.download_button(label="Скачать статистику (CSV)", data=csv_stats, file_name="statistics.csv", mime="text/csv")
+classified_stats = GetStatistics(data).classify_fish(stats)
+
+st.subheader("Классификация рыбы по элитности")
+st.write(classified_stats.iloc[:, 3:])
+
+st.subheader("Рейтинг рыб")
+st.write(classified_stats.iloc[:, 3:].apply(pd.Series.value_counts, axis=1).fillna(0).astype(int))
+
+csv_classification = classified_stats.to_csv(index=False)
+st.download_button(label="Скачать таблицу классификации (CSV)", data=csv_classification, file_name="fish_classification.csv", mime="text/csv")
 
 st.subheader("Матрица корреляции")
 bonitisation = Bonitisation(data)
@@ -226,3 +277,4 @@ histograms = draw_histograms(data, num_rows=3, num_cols=3)
 
 for column_name, img_buf in histograms:
     st.download_button(label=f"Скачать гистограмму для {column_name}", data=img_buf, file_name=f"{column_name}_histogram.png", mime="image/png")
+					 
